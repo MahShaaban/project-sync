@@ -1,0 +1,251 @@
+#!/bin/bash
+
+# Project Sync Tool - Unified Command Interface
+# Usage: psync [options] <csv_file>
+
+set -e
+
+# Default configuration
+DEFAULT_EXECUTOR="bash"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PSYNC_SCRIPT="$SCRIPT_DIR/psync.sh"
+PSYNC_CONFIG="$SCRIPT_DIR/psync.conf"
+
+# Function to show usage
+usage() {
+    cat << EOF
+Project Sync Tool - Unified Interface
+
+Usage: psync [options] <csv_file>
+
+Options:
+  -e, --executor EXEC    Execution mode: 'bash' (default) or 'sbatch'
+  -l, --line NUMBER      Process specific line (bash mode only, default: 1)
+  -a, --all             Process all lines (bash mode only)
+  -h, --help            Show this help message
+  -v, --version         Show version information
+
+Execution Modes:
+  bash      Standalone execution using bash (default)
+  sbatch    SLURM cluster execution using sbatch
+
+Examples:
+  psync data.csv                    # Bash mode, process line 1
+  psync --all data.csv              # Bash mode, process all lines
+  psync --line 5 data.csv           # Bash mode, process line 5
+  psync --executor sbatch data.csv  # SLURM mode, submit job array
+  psync -e sbatch data.csv          # SLURM mode (short form)
+
+Helper Commands (bash mode only):
+  psync new <project> [file.csv]           Create new CSV template
+  psync check <file.csv>                   Validate CSV file
+  psync preview <file.csv>                 Show directory structure
+  psync interactive                        Interactive mode
+
+CSV Format:
+  Columns: project,experiment,run,analysis,source,destination,option
+  
+  Options:
+    dryrun   - rsync dry run (preview changes)
+    copy     - standard copy using rsync
+    move     - copy and delete source files
+    archive  - create tar.gz archive
+    permit   - set directory permissions to 755
+    skip     - skip entry completely
+
+Notes:
+  - SLURM mode uses configuration from psync.conf
+  - In bash mode: line_number defaults to 1, use --all to process all lines
+  - In SLURM mode: automatically processes all CSV lines via job array
+EOF
+}
+
+# Parse command line arguments
+executor="$DEFAULT_EXECUTOR"
+line_number=""
+process_all=false
+csv_file=""
+extra_args=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -e|--executor)
+            executor="$2"
+            shift 2
+            ;;
+        -l|--line)
+            line_number="$2"
+            shift 2
+            ;;
+        -a|--all)
+            process_all=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -v|--version)
+            if [[ -f "$PSYNC_SCRIPT" ]]; then
+                bash "$PSYNC_SCRIPT" --version
+            else
+                echo "psync v1.0.0"
+            fi
+            exit 0
+            ;;
+        new|check|preview|interactive)
+            # Helper commands - pass through to psync.sh in bash mode
+            if [[ "$executor" != "bash" ]]; then
+                echo "ERROR: Helper commands are only available in bash mode"
+                exit 1
+            fi
+            bash "$PSYNC_SCRIPT" "$@"
+            exit $?
+            ;;
+        -*)
+            echo "ERROR: Unknown option $1"
+            usage
+            exit 1
+            ;;
+        *)
+            if [[ -z "$csv_file" ]]; then
+                csv_file="$1"
+            else
+                extra_args+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate executor
+if [[ "$executor" != "bash" && "$executor" != "sbatch" ]]; then
+    echo "ERROR: Invalid executor '$executor'. Must be 'bash' or 'sbatch'"
+    exit 1
+fi
+
+# Validate CSV file
+if [[ -z "$csv_file" ]]; then
+    echo "ERROR: CSV file required"
+    usage
+    exit 1
+fi
+
+if [[ ! -f "$csv_file" ]]; then
+    echo "ERROR: CSV file not found: $csv_file"
+    exit 1
+fi
+
+# Check if psync.sh exists
+if [[ ! -f "$PSYNC_SCRIPT" ]]; then
+    echo "ERROR: psync.sh not found at: $PSYNC_SCRIPT"
+    exit 1
+fi
+
+# Execute based on mode
+case "$executor" in
+    bash)
+        echo "Executing in bash mode..."
+        
+        # Build command arguments
+        cmd_args=("$csv_file")
+        
+        if [[ "$process_all" == true ]]; then
+            if [[ -n "$line_number" ]]; then
+                echo "ERROR: Cannot use both --all and --line options"
+                exit 1
+            fi
+            cmd_args+=("--all")
+        elif [[ -n "$line_number" ]]; then
+            cmd_args+=("$line_number")
+        fi
+        
+        # Add any extra arguments
+        cmd_args+=("${extra_args[@]}")
+        
+        # Execute with bash
+        bash "$PSYNC_SCRIPT" "${cmd_args[@]}"
+        ;;
+        
+    sbatch)
+        echo "Executing in SLURM mode..."
+        
+        # Check if psync.conf exists
+        if [[ ! -f "$PSYNC_CONFIG" ]]; then
+            echo "ERROR: SLURM configuration file not found: $PSYNC_CONFIG"
+            echo "Create psync.conf or use bash mode instead"
+            exit 1
+        fi
+        
+        # Check if sbatch is available
+        if ! command -v sbatch >/dev/null 2>&1; then
+            echo "ERROR: sbatch command not found. SLURM may not be available."
+            exit 1
+        fi
+        
+        # Warn about incompatible options
+        if [[ "$process_all" == true || -n "$line_number" ]]; then
+            echo "WARNING: --all and --line options are ignored in sbatch mode"
+            echo "SLURM will process all lines using array jobs"
+        fi
+        
+        # Build sbatch command from configuration file
+        sbatch_cmd="sbatch"
+        
+        echo "Reading SLURM configuration from: $PSYNC_CONFIG"
+        
+        # Parse configuration file
+        while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+            
+            # Remove any trailing whitespace
+            key=$(echo "$key" | sed 's/[[:space:]]*$//')
+            value=$(echo "$value" | sed 's/[[:space:]]*$//')
+            
+            # Convert key to sbatch parameter format
+            case "$key" in
+                job-name) sbatch_cmd="$sbatch_cmd --job-name=$value" ;;
+                output) sbatch_cmd="$sbatch_cmd --output=$value" ;;
+                error) sbatch_cmd="$sbatch_cmd --error=$value" ;;
+                partition) sbatch_cmd="$sbatch_cmd --partition=$value" ;;
+                cpus-per-task) sbatch_cmd="$sbatch_cmd --cpus-per-task=$value" ;;
+                array) sbatch_cmd="$sbatch_cmd --array=$value" ;;
+                time) sbatch_cmd="$sbatch_cmd --time=$value" ;;
+                mem|memory) sbatch_cmd="$sbatch_cmd --mem=$value" ;;
+                nodes) sbatch_cmd="$sbatch_cmd --nodes=$value" ;;
+                ntasks) sbatch_cmd="$sbatch_cmd --ntasks=$value" ;;
+                *) echo "WARNING: Unknown configuration key: $key" ;;
+            esac
+        done < "$PSYNC_CONFIG"
+        
+        # Add the script and CSV file
+        sbatch_cmd="$sbatch_cmd $PSYNC_SCRIPT $csv_file"
+        
+        # Create logs directory if it doesn't exist
+        mkdir -p logs
+        
+        # Show the command that will be executed
+        echo "Submitting SLURM job:"
+        echo "$sbatch_cmd"
+        echo ""
+        
+        # Execute the sbatch command
+        eval "$sbatch_cmd"
+        
+        if [[ $? -eq 0 ]]; then
+            echo ""
+            echo "✓ SLURM job submitted successfully!"
+            echo ""
+            echo "Monitor job status with:"
+            echo "  squeue -u $USER"
+            echo ""
+            echo "Check job output in:"
+            echo "  logs/"
+        else
+            echo ""
+            echo "✗ SLURM job submission failed!"
+            exit 1
+        fi
+        ;;
+esac
