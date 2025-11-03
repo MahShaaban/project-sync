@@ -1,0 +1,94 @@
+{
+  "psync_tasks": [
+    {
+      "project": "project1",
+      "experiment": "exp1",
+      "run": "run1",
+      "analysis": "",
+      "source": "tests/source/test_data",
+      "destination": "data",
+      "option": "dryrun"
+    },
+    {
+      "project": "project1",
+      "experiment": "exp1",
+      "run": "run1",
+      "analysis": "",
+      "source": "tests/source/test_data",
+      "destination": "",
+      "option": "copy"
+    },
+    {
+      "project": "project2",
+      "experiment": "exp2",
+      "run": "run2",
+      "analysis": "",
+      "source": "tests/source/readme_docs",
+      "destination": "data",
+      "option": "copy"
+    },
+    {
+      "project": "project2",
+      "experiment": "exp2",
+      "run": "run3",
+      "analysis": "",
+      "source": "tests/source/makefiles",
+      "destination": "data",
+      "option": "skip"
+    },
+    {
+      "project": "project2",
+      "experiment": "",
+      "run": "",
+      "analysis": "analysis1",
+      "source": "tests/source/scripts",
+      "destination": "data",
+      "option": "move"
+    },
+    {
+      "project": "project3",
+      "experiment": "",
+      "run": "",
+      "analysis": "analysis3",
+      "source": "tests/source/temp_data",
+      "destination": "data",
+      "option": "archive"
+    },
+    {
+      "project": "",
+      "experiment": "exp1",
+      "run": "run1",
+      "analysis": "",
+      "source": "tests/source/test_data",
+      "destination": "data",
+      "option": "dryrun"
+    },
+    {
+      "project": "project1",
+      "experiment": "",
+      "run": "run1",
+      "analysis": "",
+      "source": "tests/source/test_data",
+      "destination": "data",
+      "option": "dryrun"
+    },
+    {
+      "project": "project1",
+      "experiment": "exp1",
+      "run": "run1",
+      "analysis": "analysis1",
+      "source": "tests/source/test_data",
+      "destination": "data",
+      "option": "dryrun"
+    },
+    {
+      "project": "project1",
+      "experiment": "exp1",
+      "run": "run5",
+      "analysis": "",
+      "source": "",
+      "destination": "data",
+      "option": "copy"
+    }
+  ]
+}
