@@ -1,17 +1,17 @@
 # Project Sync Tool
 
 An rsync-based file synchronization script designed to work both in a cluster
-arrays and as a standalone tool. The script processes CSV-defined sync jobs with configurable sync operations.
+arrays and as a standalone tool. The script processes sync jobs defined in CSV or JSON format with configurable sync operations.
 
 ## Overview
 
-The `psync` command provides a unified interface for file synchronization operations. It uses `psync.sh` as the core processing engine and reads job definitions from CSV files.
+The `psync` command provides a unified interface for file synchronization operations. It uses `psync.sh` as the core processing engine and reads job definitions from CSV or JSON files with automatic format detection.
 
 ## Features
 
 - **Dual Mode Operation**: Works in SLURM array jobs or standalone mode
-- **CSV-Driven Configuration**: Job definitions stored in easy-to-edit CSV format
-- **Multi-line Processing**: Process all CSV lines automatically or selectively
+- **Multiple Input Formats**: Supports both CSV and JSON file formats with automatic detection
+- **Multi-line Processing**: Process all entries automatically or selectively
 - **Multiple Sync Options**: Support for dry-run, copy, move, archive, permit, and skip operations
 
 ## Processing Modes
@@ -25,7 +25,7 @@ The script supports multiple processing modes for different use cases:
 psync tests/data.csv
 psync --line 3 tests/data.csv
 
-# Process all lines
+# Process all lines - supports both formats
 psync --all tests/data.csv
 ```
 
@@ -44,19 +44,27 @@ psync interactive
 
 ### Helper Commands
 
-#### Create and Validate CSV Files
+#### Create and Validate Files
 ```bash
-# Create new project template
+# Create new project template (CSV by default)
 psync new genomics_project
 
-# Validate CSV file
-psync check genomics_project.csv
+# Create JSON template
+psync new genomics_project project.json
 
-# Preview directory structure
+# Validate files (auto-detects format)
+psync check genomics_project.csv
+psync check genomics_project.json
+
+# Preview directory structure (works with both formats)
 psync preview genomics_project.csv
 ```
 
-## CSV Format
+## File Formats
+
+The script supports two input formats, automatically detected by file extension and content:
+
+### CSV Format
 
 The input CSV file should contain the following columns:
 
@@ -76,6 +84,37 @@ project1,exp1,run1,,tests/source/test_data,data,dryrun
 project1,exp1,run2,,tests/source/test_data,,copy
 project2,,,analysis1,tests/source/scripts,data,move
 ```
+
+### JSON Format
+
+Alternatively, you can use JSON format with the same data structure:
+
+```json
+{
+  "psync_tasks": [
+    {
+      "project": "project1",
+      "experiment": "exp1",
+      "run": "run1",
+      "analysis": "",
+      "source": "tests/source/test_data",
+      "destination": "data",
+      "option": "dryrun"
+    },
+    {
+      "project": "project1",
+      "experiment": "exp1",
+      "run": "run2",
+      "analysis": "",
+      "source": "tests/source/test_data",
+      "destination": "",
+      "option": "copy"
+    }
+  ]
+}
+```
+
+Both formats support the same field definitions and sync options.
 
 ### Sync Options
 
