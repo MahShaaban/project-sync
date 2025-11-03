@@ -156,7 +156,7 @@ test_config_creation() {
 }
 
 test_dist_target() {
-    run_test "make dist" "make dist && [[ -f dist/project-sync-1.0.0.tar.gz ]]"
+    run_test "make dist" "make dist && [[ -f dist/psync-0.1.tar.gz ]]"
 }
 
 test_uninstall() {
