@@ -2,9 +2,7 @@
 
 # Core processing script for project-sync
 # Main user interface: psync command
-# Direct usage: bash psync.sh <csv_file> [line_number|--all]
-
-# set -e  # Disabled for now - some piped commands return non-zero
+# Direct usage: bash psync.sh <input_file> [line_number|--all]
 
 # Script configuration
 readonly SCRIPT_DIR="$PWD"
@@ -19,7 +17,7 @@ $SCRIPT_NAME v$VERSION - Core Processing Script
 This is the core processing script. Use the 'psync' command for the main interface.
 
 Basic usage:
-  bash psync.sh <csv_file> [line_number|--all]
+  bash psync.sh <input_file> [line_number|--all]
 
 For full functionality, use: psync --help
 EOF
@@ -30,17 +28,60 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
-# Count lines in CSV file (excluding empty lines)
-count_csv_lines() {
-    local csv_file="$1"
+# Detect file type (CSV or JSON)
+detect_file_type() {
+    local file="$1"
     
-    if [[ ! -f "$csv_file" ]]; then
+    if [[ ! -f "$file" ]]; then
+        echo "UNKNOWN"
+        return 1
+    fi
+    
+    # Check file extension first
+    case "${file,,}" in
+        *.json) echo "JSON"; return 0 ;;
+        *.csv) echo "CSV"; return 0 ;;
+    esac
+    
+    # If no clear extension, check content
+    local first_line
+    first_line=$(head -n1 "$file" 2>/dev/null)
+    
+    if [[ "$first_line" =~ ^\s*\{ ]]; then
+        echo "JSON"
+    elif [[ "$first_line" =~ ^[^,]*,[^,]* ]]; then
+        echo "CSV"
+    else
+        echo "UNKNOWN"
+        return 1
+    fi
+}
+
+# Count entries in file (auto-detect format)
+count_file_lines() {
+    local file="$1"
+    
+    if [[ ! -f "$file" ]]; then
         echo "0"
         return
     fi
     
-    # Count non-empty lines
-    grep -c '^[^[:space:]]*,' "$csv_file" 2>/dev/null || echo "0"
+    local file_type
+    file_type=$(detect_file_type "$file")
+    
+    case "$file_type" in
+        "CSV") grep -c '^[^[:space:]]*,' "$file" 2>/dev/null || echo "0" ;;
+        "JSON") 
+            local count
+            count=$(grep -o '^\s*{' "$file" 2>/dev/null | wc -l)
+            if grep -q '"psync_tasks"' "$file" 2>/dev/null; then
+                echo $((count - 1))
+            else
+                echo "$count"
+            fi
+            ;;
+        *) echo "0" ;;
+    esac
 }
 
 # Parse CSV line for this array task
@@ -67,41 +108,105 @@ parse_csv_line() {
     # Just check if we have the minimum expected number of fields
 }
 
+# Parse JSON task for this array task
+parse_json_line() {
+    local json_file="${1:-$CSV_FILE}"
+    local task_id="${2:-$TASK_ID}"
+    
+    # Find the psync_tasks array start
+    local start_line task_json
+    start_line=$(grep -n '"psync_tasks"' "$json_file" | cut -d: -f1)
+    if [[ -z "$start_line" ]]; then
+        log "No data for task $task_id, exiting"
+        exit 0
+    fi
+    
+    # Extract task using line-based approach
+    task_json=$(sed -n "${start_line},\$p" "$json_file" | awk -v target="$((task_id - 1))" '
+        /^\s*{/ && !/psync_tasks/ { if (count++ == target) start=1; next }
+        start && /^\s*}/ { print; exit }
+        start { print }
+    ')
+    
+    if [[ -z "$task_json" ]]; then
+        log "No data for task $task_id, exiting"
+        exit 0
+    fi
+    
+    # Extract fields using sed
+    project=$(echo "$task_json" | sed -n 's/.*"project"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    experiment=$(echo "$task_json" | sed -n 's/.*"experiment"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    run=$(echo "$task_json" | sed -n 's/.*"run"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    analysis=$(echo "$task_json" | sed -n 's/.*"analysis"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    source=$(echo "$task_json" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    destination=$(echo "$task_json" | sed -n 's/.*"destination"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    option=$(echo "$task_json" | sed -n 's/.*"option"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+}
+
+# Parse line from file (auto-detect format)
+parse_file_line() {
+    local file="${1:-$CSV_FILE}"
+    local task_id="${2:-$TASK_ID}"
+    local file_type
+    file_type=$(detect_file_type "$file")
+    
+    case "$file_type" in
+        "CSV") parse_csv_line "$file" "$task_id" ;;
+        "JSON") parse_json_line "$file" "$task_id" ;;
+        *) 
+            log "ERROR: Unsupported file format for $file"
+            exit 1
+            ;;
+    esac
+}
+
+# Common validation logic for both CSV and JSON
+validate_task() {
+    local line_num="$1"
+    local label="${2:-line}"  # "line" for CSV, "task" for JSON
+    
+    # Check required fields
+    if [[ -z "$source" || -z "$destination" || -z "$option" ]]; then
+        echo "ERROR $label $line_num: Missing required fields (source, destination, option)"
+        return 2  # Error
+    fi
+    
+    # Project hierarchy validation
+    if [[ -z "$project" ]]; then
+        echo "WARNING $label $line_num: Project field is required and cannot be empty - skipping $label"
+        return 1  # Skip
+    fi
+    
+    if [[ -n "$run" && -z "$experiment" ]]; then
+        echo "WARNING $label $line_num: Run field provided but experiment field is missing (run requires experiment) - skipping $label"
+        return 1  # Skip
+    fi
+    
+    if [[ -n "$analysis" && ( -n "$run" || -n "$experiment" ) ]]; then
+        echo "WARNING $label $line_num: Analysis field cannot be provided when run or experiment fields are present - skipping $label"
+        return 1  # Skip
+    fi
+    
+    if [[ -z "$source" ]]; then
+        echo "WARNING $label $line_num: No source provided - skipping $label"
+        return 1  # Skip
+    fi
+    
+    # Option validity
+    case "$option" in
+        dryrun|copy|move|archive|permit|skip) ;;
+        *) 
+            echo "ERROR $label $line_num: Invalid option '$option'"
+            return 2  # Error
+            ;;
+    esac
+    
+    return 0  # Valid
+}
+
 # Validate CSV line for processing (returns 0 for valid, 1 for skip with warning)
 validate_csv_line() {
-    local line_num="$1"
-    
-    # Rule 1: Project must always be provided (cannot be empty) - WARN and skip
-    if [[ -z "$project" ]]; then
-        echo "WARNING line $line_num: Project field is required and cannot be empty - skipping line"
-        return 1
-    fi
-    
-    # Rule 2: If run is provided, experiment must also be provided - WARN and skip
-    if [[ -n "$run" && -z "$experiment" ]]; then
-        echo "WARNING line $line_num: Run field provided but experiment field is missing (run requires experiment) - skipping line"
-        return 1
-    fi
-    
-    # Rule 3: Analysis cannot be provided when run or experiment are present - WARN and skip
-    if [[ -n "$analysis" && ( -n "$run" || -n "$experiment" ) ]]; then
-        echo "WARNING line $line_num: Analysis field cannot be provided when run or experiment fields are present - skipping line"
-        return 1
-    fi
-    
-    # Rule 4: Source must be provided - WARN and skip if missing
-    if [[ -z "$source" ]]; then
-        echo "WARNING line $line_num: No source provided - skipping line"
-        return 1
-    fi
-    
-    # Rule 5: Option must be provided - WARN and skip if missing
-    if [[ -z "$option" ]]; then
-        echo "WARNING line $line_num: No operation option provided - skipping line"
-        return 1
-    fi
-    
-    return 0
+    validate_task "$1" "line"
 }
 
 # Build destination path from non-empty fields
@@ -189,13 +294,13 @@ perform_rsync() {
 
 # Process a single CSV line
 process_single_line() {
-    local csv_file="$1"
+    local file="$1"
     local line_number="$2"
     
     log "Processing line $line_number"
     
-    # Parse CSV input (use line_number as task_id since they're 1-based)
-    parse_csv_line "$csv_file" "$line_number"
+    # Parse input (use line_number as task_id since they're 1-based)
+    parse_file_line "$file" "$line_number"
     
     # Validate the parsed line
     if ! validate_csv_line "$line_number"; then
@@ -221,123 +326,163 @@ process_single_line() {
     log "Completed processing line $line_number"
 }
 
-# Helper Functions (formerly in psync-helper.sh)
-# Create a new CSV template
+# Create a new template file
 psync_new() {
     local project_name="${1:-new_project}"
-    local csv_file="${2:-${project_name}.csv}"
+    local output_file="${2:-${project_name}.csv}"
     
-    cat > "$csv_file" << EOF
+    if [[ "${output_file,,}" == *.json ]]; then
+        cat > "$output_file" << EOF
+{
+  "psync_tasks": [
+    {
+      "project": "$project_name",
+      "experiment": "exp_001",
+      "run": "run_001",
+      "analysis": "",
+      "source": "/source/path",
+      "destination": "preprocessed",
+      "option": "copy"
+    },
+    {
+      "project": "$project_name",
+      "experiment": "exp_001",
+      "run": "run_002",
+      "analysis": "",
+      "source": "/source/path",
+      "destination": "qc_results",
+      "option": "dryrun"
+    },
+    {
+      "project": "$project_name",
+      "experiment": "",
+      "run": "",
+      "analysis": "analysis",
+      "source": "/processed/path",
+      "destination": "final_results",
+      "option": "move"
+    }
+  ]
+}
+EOF
+        echo "Created JSON template: $output_file"
+    else
+        cat > "$output_file" << EOF
 # $project_name sync configuration
 # Format: project,experiment,run,analysis,source,destination,option
 $project_name,exp_001,run_001,,/source/path,preprocessed,copy
 $project_name,exp_001,run_002,,/source/path,qc_results,dryrun
 $project_name,,,analysis,/processed/path,final_results,move
 EOF
+        echo "Created CSV template: $output_file"
+    fi
     
-    echo "Created template: $csv_file"
-    echo "Edit the file and run: psync $csv_file"
+    echo "Edit the file and run: psync $output_file"
 }
 
-# Validate CSV file
+# Validate file
 psync_check() {
-    local csv_file="$1"
+    local input_file="$1"
     local skip_source_check=false
     
     # Parse optional flags
-    if [[ "$csv_file" == "--skip-source-check" ]]; then
+    if [[ "$input_file" == "--skip-source-check" ]]; then
         skip_source_check=true
-        csv_file="$2"
+        input_file="$2"
     elif [[ "$2" == "--skip-source-check" ]]; then
         skip_source_check=true
     fi
     
-    if [[ ! -f "$csv_file" ]]; then
-        echo "ERROR: File not found: $csv_file"
+    if [[ ! -f "$input_file" ]]; then
+        echo "ERROR: File not found: $input_file"
         return 1
     fi
     
-    echo "Validating $csv_file..."
-    local line_num=0
+    local file_type
+    file_type=$(detect_file_type "$input_file")
     
-    while IFS=, read -r project experiment run analysis source destination option; do
-        ((line_num++))
-        
-        # Skip comments and empty lines
-        [[ "$project" =~ ^#.*$ ]] && continue
-        [[ -z "$project$experiment$run$analysis$source$destination$option" ]] && continue
-        
-        # Check required fields
-        if [[ -z "$source" || -z "$destination" || -z "$option" ]]; then
-            echo "ERROR line $line_num: Missing required fields (source, destination, option)"
-            ((errors++))
-        fi
-        
-        # Validate project hierarchy rules
-        # Rule 1: Project must always be provided (cannot be empty) - WARN and skip instead of error
-        if [[ -z "$project" ]]; then
-            echo "WARNING line $line_num: Project field is required and cannot be empty - skipping line"
-            continue
-        fi
-        
-        # Rule 2: If run is provided, experiment must also be provided - WARN and skip instead of error
-        if [[ -n "$run" && -z "$experiment" ]]; then
-            echo "WARNING line $line_num: Run field provided but experiment field is missing (run requires experiment) - skipping line"
-            continue
-        fi
-        
-        # Rule 3: Analysis cannot be provided when run or experiment are present - WARN and skip instead of error
-        # Only allowed combinations: project+experiment+run OR project+analysis
-        if [[ -n "$analysis" && ( -n "$run" || -n "$experiment" ) ]]; then
-            echo "WARNING line $line_num: Analysis field cannot be provided when run or experiment fields are present - skipping line"
-            continue
-        fi
-        
-        # Rule 4: Source must be provided - WARN and skip if missing
-        if [[ -z "$source" ]]; then
-            echo "WARNING line $line_num: No source provided - skipping line"
-            continue
-        fi
-        
-        # Check option validity
-        case "$option" in
-            dryrun|copy|move|archive|permit|skip) ;;
-            *) 
-                echo "ERROR line $line_num: Invalid option '$option'"
-                ((errors++))
-                ;;
-        esac
-        
-        # Check source path exists (for copy/move operations) - optional
-        if [[ "$skip_source_check" == false && "$option" =~ ^(copy|move|dryrun)$ && ! -e "$source" ]]; then
-            echo "WARNING line $line_num: Source path does not exist: $source"
-        fi
-    done < "$csv_file"
+    echo "Validating $input_file ($file_type format)..."
+    local line_num=0 errors=0
     
-    echo "✓ CSV file validation completed"
-    echo "Found $((line_num)) lines processed"
+    if [[ "$file_type" == "JSON" ]]; then
+        local total_tasks
+        total_tasks=$(count_file_lines "$input_file")
+        
+        for ((i=1; i<=total_tasks; i++)); do
+            parse_json_line "$input_file" "$i"
+            ((line_num++))
+            
+            local result
+            validate_task "$line_num" "task"
+            result=$?
+            [[ $result -eq 2 ]] && ((errors++))
+            
+            # Check source path exists (optional)
+            if [[ "$skip_source_check" == false && "$option" =~ ^(copy|move|dryrun)$ && ! -e "$source" ]]; then
+                echo "WARNING task $line_num: Source path does not exist: $source"
+            fi
+        done
+    else
+        while IFS=, read -r project experiment run analysis source destination option; do
+            ((line_num++))
+            
+            # Skip comments and empty lines
+            [[ "$project" =~ ^#.*$ ]] && continue
+            [[ -z "$project$experiment$run$analysis$source$destination$option" ]] && continue
+            
+            local result
+            validate_task "$line_num" "line"
+            result=$?
+            [[ $result -eq 2 ]] && ((errors++))
+            
+            # Check source path exists (optional)
+            if [[ "$skip_source_check" == false && "$option" =~ ^(copy|move|dryrun)$ && ! -e "$source" ]]; then
+                echo "WARNING line $line_num: Source path does not exist: $source"
+            fi
+        done < "$input_file"
+    fi
+    
+    echo "✓ $file_type file validation completed"
+    echo "Found $line_num lines processed"
 }
 
 # Show project structure that would be created
 psync_preview() {
-    local csv_file="$1"
+    local input_file="$1"
+    local file_type
+    file_type=$(detect_file_type "$input_file")
     
-    echo "Project structure preview for: $csv_file"
+    echo "Project structure preview for: $input_file ($file_type)"
     echo "====================================="
     
-    while IFS=, read -r project experiment run analysis source destination option; do
-        # Skip comments and empty lines
-        [[ "$project" =~ ^#.*$ ]] && continue
-        [[ -z "$project$experiment$run$analysis$source$destination$option" ]] && continue
+    if [[ "$file_type" == "JSON" ]]; then
+        local total_tasks
+        total_tasks=$(count_file_lines "$input_file")
         
-        # Build path
-        local path=""
-        for field in "$project" "$experiment" "$run" "$analysis"; do
-            [[ -n "$field" ]] && path="${path:+$path/}$field"
+        for ((i=1; i<=total_tasks; i++)); do
+            parse_json_line "$input_file" "$i"
+            
+            # Build and display path
+            local path=""
+            for field in "$project" "$experiment" "$run" "$analysis"; do
+                [[ -n "$field" ]] && path="${path:+$path/}$field"
+            done
+            echo "  $path/$destination/ ($option)"
         done
-        
-        echo "  $path/$destination/ ($option)"
-    done < "$csv_file"
+    else
+        while IFS=, read -r project experiment run analysis source destination option; do
+            # Skip comments and empty lines
+            [[ "$project" =~ ^#.*$ ]] && continue
+            [[ -z "$project$experiment$run$analysis$source$destination$option" ]] && continue
+            
+            # Build and display path
+            local path=""
+            for field in "$project" "$experiment" "$run" "$analysis"; do
+                [[ -n "$field" ]] && path="${path:+$path/}$field"
+            done
+            echo "  $path/$destination/ ($option)"
+        done < "$input_file"
+    fi
 }
 
 # Interactive mode
@@ -426,22 +571,20 @@ main() {
     [[ $# -eq 0 ]] && { usage; exit 1; }
     
     # Script configuration
-    readonly CSV_FILE="${1:?CSV file required}"
-    readonly PROCESS_MODE="${2:-1}"  # Can be line number or --all
+    readonly CSV_FILE="${1:?Input file required}"
+    readonly PROCESS_MODE="${2:-1}"
     
     # Determine processing mode
     if [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
-        # Running in SLURM array job - process single line with graceful exit
+        # SLURM array job - process single line with graceful exit
         readonly TASK_ID="$SLURM_ARRAY_TASK_ID"
         readonly IS_SLURM=true
         local line_number=$((TASK_ID))
-        
-        # Count total lines only for logging
         local total_lines
-        total_lines=$(count_csv_lines "$CSV_FILE")
+        total_lines=$(count_file_lines "$CSV_FILE")
         
         if [[ "$line_number" -gt "$total_lines" ]]; then
-            log "SLURM task $line_number: No corresponding line in CSV (total: $total_lines), exiting gracefully"
+            log "SLURM task $line_number: No corresponding line in file (total: $total_lines), exiting gracefully"
             exit 0
         fi
         
@@ -451,33 +594,31 @@ main() {
     elif [[ "$PROCESS_MODE" == "--all" ]]; then
         # Standalone mode - process all lines
         local total_lines
-        total_lines=$(count_csv_lines "$CSV_FILE")
+        total_lines=$(count_file_lines "$CSV_FILE")
         
         if [[ "$total_lines" -eq 0 ]]; then
-            log "ERROR: No valid CSV lines found in $CSV_FILE"
+            log "ERROR: No valid entries found in $CSV_FILE"
             exit 1
         fi
         
-        log "Standalone mode: Processing all $total_lines lines"
+        log "Standalone mode: Processing all $total_lines entries"
         
         for ((i=1; i<=total_lines; i++)); do
-            log "=== Processing line $i of $total_lines ==="
+            log "=== Processing entry $i of $total_lines ==="
             process_single_line "$CSV_FILE" "$i"
             log ""
         done
         
-        log "All lines processed successfully"
+        log "All entries processed successfully"
         
     else
         # Standalone mode - process specific line
         local line_number="$PROCESS_MODE"
-        
-        # Count total lines for validation
         local total_lines
-        total_lines=$(count_csv_lines "$CSV_FILE")
+        total_lines=$(count_file_lines "$CSV_FILE")
         
         if [[ "$total_lines" -eq 0 ]]; then
-            log "ERROR: No valid CSV lines found in $CSV_FILE"
+            log "ERROR: No valid entries found in $CSV_FILE"
             exit 1
         fi
         
@@ -487,7 +628,7 @@ main() {
             exit 1
         fi
         
-        log "Standalone mode: Processing line $line_number of $total_lines"
+        log "Standalone mode: Processing entry $line_number of $total_lines"
         process_single_line "$CSV_FILE" "$line_number"
     fi
 }
