@@ -33,29 +33,25 @@ Execution Modes:
   bash      Standalone execution using bash (default)
   sbatch    SLURM cluster execution using sbatch
 
-Examples:
-  psync data.csv                    # Bash mode, process line 1
-  psync --all data.csv              # Bash mode, process all lines
-  psync --line 5 data.csv           # Bash mode, process line 5
-  psync --executor sbatch data.csv  # SLURM mode, submit job array
-  psync -e sbatch data.csv          # SLURM mode (short form)
-
 Helper Commands (bash mode only):
-  psync new <project> [file.csv|file.json]   Create new template
-  psync check <file>                          Validate file
-  psync preview <file>                        Show directory structure
-  psync interactive                           Interactive mode
+  psync new <project>               Create new CSV template
+  psync new <project> file.json     Create new JSON template
+  psync check <file>                Validate CSV/JSON file
+  psync preview <file>              Show directory structure
+  psync interactive                 Interactive mode
 
-Supported Formats:
-  CSV:  project,experiment,run,analysis,source,destination,option
-  JSON: {"psync_tasks": [{"project": "...", "experiment": "...", ...}]}
-  
-Options: dryrun, copy, move, archive, permit, skip
+Operation Options:
+  dryrun    Preview changes without executing
+  copy      Copy files using rsync
+  move      Copy files and remove source
+  archive   Create tar.gz archive
+  permit    Set directory permissions (755)
+  skip      Skip entry (for testing)
 
 Notes:
-  - Auto-detects CSV/JSON format
+  - File format auto-detected by extension and content
   - SLURM mode uses psync.conf configuration
-  - Use --all to process all entries in bash mode
+  - Both formats support same project hierarchy rules
 EOF
 }
 
