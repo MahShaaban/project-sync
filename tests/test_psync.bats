@@ -95,7 +95,7 @@ teardown() {
     export -f rsync
     
     run bash "$BATS_TEST_DIRNAME/../psync.sh" "$TEST_CSV" 1 2>&1
-    [[ "$output" =~ "Standalone mode: Processing line 1" ]]
+    [[ "$output" =~ "Standalone mode: Processing entry 1" ]]
 }
 
 @test "script detects SLURM mode" {
