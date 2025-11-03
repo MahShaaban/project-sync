@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, devel ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y rsync gawk sed coreutils
+    
+    - name: Check dependencies
+      run: make check-deps
+    
+    - name: Install bats testing framework
+      run: make install-bats
+    
+    - name: Run test suite
+      run: make test-only
+    
+    - name: Test CSV functionality
+      run: |
+        ./psync check tests/data.csv
+        ./psync preview tests/data.csv
+    
+    - name: Test JSON functionality  
+      run: |
+        ./psync check tests/data.json
+        ./psync preview tests/data.json
+    
+    - name: Test template creation
+      run: |
+        ./psync new test_project
+        ./psync new test_json_project test.json
+        ./psync check test_project.csv
+        ./psync check test.json
+    
+    - name: Test help and version
+      run: |
+        ./psync --help
+        ./psync --version
+
+  compatibility:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Test on minimal system
+      run: |
+        # Test with minimal PATH
+        export PATH="/usr/bin:/bin"
+        make check-deps
+        make install-bats
+        make test-only
