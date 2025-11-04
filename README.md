@@ -80,12 +80,13 @@ The input CSV file should contain the following columns:
 | source | Source path | **Yes** | `/data/raw/samples/` |
 | destination | Destination folder name | **Yes** | `processed_data` |
 | option | Sync operation type | **Yes** | `copy` |
+| owner | File/directory owner | **Yes** | `username` |
 
 ### CSV Example
 ```csv
-project1,exp1,run1,,tests/source/test_data,data,dryrun
-project1,exp1,run2,,tests/source/test_data,,copy
-project2,,,analysis1,tests/source/scripts,data,move
+project1,exp1,run1,,tests/source/test_data,data,dryrun,user1
+project1,exp1,run2,,tests/source/test_data,,copy,user1
+project2,,,analysis1,tests/source/scripts,data,move,admin
 ```
 
 ### JSON Format
@@ -102,7 +103,8 @@ Alternatively, you can use JSON format with the same data structure:
       "analysis": "",
       "source": "tests/source/test_data",
       "destination": "data",
-      "option": "dryrun"
+      "option": "dryrun",
+      "owner": "user1"
     },
     {
       "project": "project1",
@@ -111,13 +113,16 @@ Alternatively, you can use JSON format with the same data structure:
       "analysis": "",
       "source": "tests/source/test_data",
       "destination": "",
-      "option": "copy"
+      "option": "copy",
+      "owner": "user1"
     }
   ]
 }
 ```
 
 Both formats support the same field definitions and sync options.
+
+**Note**: The owner field is required in the data structure and the system will produce a warning if it's empty: `"Owner field is empty - this may cause permission issues"`. While not enforced as an error, providing owner information is recommended for proper file management.
 
 ### Sync Options
 

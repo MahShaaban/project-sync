@@ -102,7 +102,7 @@ parse_csv_line() {
     }
     
     # Use global variables (no local declaration)
-    IFS=',' read -r project experiment run analysis source destination option <<< "$line"
+    IFS=',' read -r project experiment run analysis source destination option owner <<< "$line"
     
     # Basic field count validation only - detailed validation happens later
     # Just check if we have the minimum expected number of fields
@@ -141,6 +141,7 @@ parse_json_line() {
     source=$(echo "$task_json" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
     destination=$(echo "$task_json" | sed -n 's/.*"destination"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
     option=$(echo "$task_json" | sed -n 's/.*"option"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    owner=$(echo "$task_json" | sed -n 's/.*"owner"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 }
 
 # Parse line from file (auto-detect format)
@@ -169,6 +170,11 @@ validate_task() {
     if [[ -z "$source" || -z "$destination" || -z "$option" ]]; then
         echo "ERROR $label $line_num: Missing required fields (source, destination, option)"
         return 2  # Error
+    fi
+    
+    # Owner field warning
+    if [[ -z "$owner" ]]; then
+        echo "WARNING $label $line_num: Owner field is empty - this may cause permission issues"
     fi
     
     # Project hierarchy validation
@@ -342,7 +348,8 @@ psync_new() {
       "analysis": "",
       "source": "/source/path",
       "destination": "preprocessed",
-      "option": "copy"
+      "option": "copy",
+      "owner": "\$USER"
     },
     {
       "project": "$project_name",
@@ -351,7 +358,8 @@ psync_new() {
       "analysis": "",
       "source": "/source/path",
       "destination": "qc_results",
-      "option": "dryrun"
+      "option": "dryrun",
+      "owner": "\$USER"
     },
     {
       "project": "$project_name",
@@ -360,7 +368,8 @@ psync_new() {
       "analysis": "analysis",
       "source": "/processed/path",
       "destination": "final_results",
-      "option": "move"
+      "option": "move",
+      "owner": "\$USER"
     }
   ]
 }
@@ -369,10 +378,10 @@ EOF
     else
         cat > "$output_file" << EOF
 # $project_name sync configuration
-# Format: project,experiment,run,analysis,source,destination,option
-$project_name,exp_001,run_001,,/source/path,preprocessed,copy
-$project_name,exp_001,run_002,,/source/path,qc_results,dryrun
-$project_name,,,analysis,/processed/path,final_results,move
+# Format: project,experiment,run,analysis,source,destination,option,owner
+$project_name,exp_001,run_001,,/source/path,preprocessed,copy,\$USER
+$project_name,exp_001,run_002,,/source/path,qc_results,dryrun,\$USER
+$project_name,,,analysis,/processed/path,final_results,move,\$USER
 EOF
         echo "Created CSV template: $output_file"
     fi
@@ -423,7 +432,7 @@ psync_check() {
             fi
         done
     else
-        while IFS=, read -r project experiment run analysis source destination option; do
+        while IFS=, read -r project experiment run analysis source destination option owner; do
             ((line_num++))
             
             # Skip comments and empty lines
