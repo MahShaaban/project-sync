@@ -1,7 +1,6 @@
 # Project Sync Tool
 
 [![CI](https://github.com/MahShaaban/project-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/MahShaaban/project-sync/actions/workflows/ci.yml)
-[![Release](https://github.com/MahShaaban/project-sync/actions/workflows/release.yml/badge.svg)](https://github.com/MahShaaban/project-sync/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 An rsync-based file synchronization script designed to work both in a cluster
