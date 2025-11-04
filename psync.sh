@@ -166,10 +166,15 @@ validate_task() {
     local line_num="$1"
     local label="${2:-line}"  # "line" for CSV, "task" for JSON
     
-    # Check required fields
-    if [[ -z "$source" || -z "$destination" || -z "$option" ]]; then
-        echo "ERROR $label $line_num: Missing required fields (source, destination, option)"
+    # Check required fields (excluding source which has special handling)
+    if [[ -z "$destination" || -z "$option" ]]; then
+        echo "ERROR $label $line_num: Missing required fields (destination, option)"
         return 2  # Error
+    fi
+    
+    # Source field special handling - warning but continue processing
+    if [[ -z "$source" ]]; then
+        echo "WARNING $label $line_num: Source field is empty - directory will be created but no data will be moved"
     fi
     
     # Owner field warning
@@ -190,11 +195,6 @@ validate_task() {
     
     if [[ -n "$analysis" && ( -n "$run" || -n "$experiment" ) ]]; then
         echo "WARNING $label $line_num: Analysis field cannot be provided when run or experiment fields are present - skipping $label"
-        return 1  # Skip
-    fi
-    
-    if [[ -z "$source" ]]; then
-        echo "WARNING $label $line_num: No source provided - skipping $label"
         return 1  # Skip
     fi
     
@@ -254,6 +254,12 @@ perform_rsync() {
         mkdir -p "$dest"
     fi
     
+    # Handle empty source case
+    if [[ -z "$src" ]]; then
+        log "Source is empty - directory created but no data transferred: $dest"
+        return 0
+    fi
+    
     log "Syncing: $src -> $dest"
     log "Options: $opts"
     
@@ -274,6 +280,10 @@ perform_rsync() {
             return 0
             ;;
         "ARCHIVE")
+            if [[ -z "$src" ]]; then
+                log "ARCHIVE: Cannot create archive - source is empty"
+                return 0
+            fi
             log "ARCHIVE: Creating tar.gz archive of $src"
             local archive_name="$(basename "$src")_$(date +%Y%m%d_%H%M%S).tar.gz"
             local archive_path="$dest/$archive_name"
@@ -288,7 +298,11 @@ perform_rsync() {
             return 0
             ;;
         *)
-            # Standard rsync operations
+            # Standard rsync operations - skip if source is empty
+            if [[ -z "$src" ]]; then
+                log "Standard operation skipped - source is empty"
+                return 0
+            fi
             if [[ -n "$opts" ]]; then
                 rsync -av --progress $opts "$src" "$dest"
             else
