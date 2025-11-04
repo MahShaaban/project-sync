@@ -166,15 +166,20 @@ validate_task() {
     local line_num="$1"
     local label="${2:-line}"  # "line" for CSV, "task" for JSON
     
-    # Check required fields (excluding source which has special handling)
-    if [[ -z "$destination" || -z "$option" ]]; then
-        echo "ERROR $label $line_num: Missing required fields (destination, option)"
+    # Check required fields (only option is truly required)
+    if [[ -z "$option" ]]; then
+        echo "ERROR $label $line_num: Missing required field (option)"
         return 2  # Error
     fi
     
     # Source field special handling - warning but continue processing
     if [[ -z "$source" ]]; then
         echo "WARNING $label $line_num: Source field is empty - directory will be created but no data will be moved"
+    fi
+    
+    # Destination field special handling - empty means top level of constructed path
+    if [[ -z "$destination" ]]; then
+        echo "INFO $label $line_num: Destination is empty - files will be moved to top level of constructed path"
     fi
     
     # Owner field warning
@@ -331,7 +336,15 @@ process_single_line() {
     # Build paths and options
     local file_path
     file_path=$(build_path)
-    local full_dest="$SCRIPT_DIR/$file_path/$destination"
+    
+    # Handle destination - if empty, use top level of constructed path
+    local full_dest
+    if [[ -z "$destination" ]]; then
+        full_dest="$SCRIPT_DIR/$file_path"
+    else
+        full_dest="$SCRIPT_DIR/$file_path/$destination"
+    fi
+    
     local rsync_opts
     rsync_opts=$(get_rsync_options "$option")
     
