@@ -11,8 +11,8 @@ setup() {
     # Simple test CSV file
     TEST_CSV="$TEST_TEMP_DIR/test.csv"
     cat > "$TEST_CSV" << EOF
-project1,exp1,run1,,tests/source/test_data,data,dryrun
-project2,,,analysis1,tests/source/scripts,results,copy
+project1,exp1,run1,,tests/source/test_data,data,dryrun,user1
+project2,,,analysis1,tests/source/scripts,results,copy,admin
 EOF
     export TEST_CSV
     
@@ -151,4 +151,54 @@ teardown() {
 @test "script has validation logic" {
     grep -q "Missing required fields" "$BATS_TEST_DIRNAME/../psync.sh"
     grep -q "validate_csv_line" "$BATS_TEST_DIRNAME/../psync.sh"
+}
+
+@test "warning is produced when owner field is empty" {
+    # Create a test CSV with empty owner field
+    local test_csv_empty_owner="$TEST_TEMP_DIR/test_empty_owner.csv"
+    cat > "$test_csv_empty_owner" << EOF
+project1,exp1,run1,,tests/source/test_data,data,dryrun,
+project2,exp2,run2,,tests/source/test_data,data,copy,user1
+EOF
+    
+    # Create a test JSON with empty owner field
+    local test_json_empty_owner="$TEST_TEMP_DIR/test_empty_owner.json"
+    cat > "$test_json_empty_owner" << EOF
+{
+  "psync_tasks": [
+    {
+      "project": "project1",
+      "experiment": "exp1",
+      "run": "run1",
+      "analysis": "",
+      "source": "tests/source/test_data",
+      "destination": "data",
+      "option": "dryrun",
+      "owner": ""
+    },
+    {
+      "project": "project2",
+      "experiment": "exp2",
+      "run": "run2",
+      "analysis": "",
+      "source": "tests/source/test_data",
+      "destination": "data",
+      "option": "copy",
+      "owner": "user1"
+    }
+  ]
+}
+EOF
+    
+    # Test CSV validation
+    run bash "$BATS_TEST_DIRNAME/../psync.sh" check "$test_csv_empty_owner"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "WARNING line 1: Owner field is empty - this may cause permission issues" ]]
+    [[ ! "$output" =~ "WARNING line 2: Owner field is empty" ]]  # Line 2 should not have warning
+    
+    # Test JSON validation
+    run bash "$BATS_TEST_DIRNAME/../psync.sh" check "$test_json_empty_owner"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "WARNING task 1: Owner field is empty - this may cause permission issues" ]]
+    [[ ! "$output" =~ "WARNING task 2: Owner field is empty" ]]  # Task 2 should not have warning
 }
