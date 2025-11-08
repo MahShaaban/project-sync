@@ -149,7 +149,7 @@ teardown() {
 
 # Validation tests
 @test "script has validation logic" {
-    grep -q "Missing required fields" "$BATS_TEST_DIRNAME/../psync.sh"
+    grep -q "Missing required field" "$BATS_TEST_DIRNAME/../psync.sh"
     grep -q "validate_csv_line" "$BATS_TEST_DIRNAME/../psync.sh"
 }
 
